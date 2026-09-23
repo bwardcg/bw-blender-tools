@@ -9,44 +9,6 @@ L2 = "..  ..  "
 L3 = "..  ..  ..  "
 
 
-def _collect_hierarchy(roots):
-    """Selected objects plus every descendant (depth-first), so freezing a parent never drags its children."""
-    result = []
-    seen = set()
-
-    def visit(obj):
-        if obj in seen:
-            return
-        seen.add(obj)
-        result.append(obj)
-        for child in obj.children:
-            visit(child)
-
-    for root in roots:
-        visit(root)
-    return result
-
-
-def _is_identity_node(obj):
-    """Objects that collapse to an identity world matrix; everything else keeps its world placement."""
-    if obj.type == 'MESH':
-        return True
-    # Plain empties are Maya-style group transforms: zero them so the hierarchy
-    # survives. Collection-instance empties ARE their visible geometry, so they stay put.
-    return obj.type == 'EMPTY' and obj.instance_type == 'NONE'
-
-
-def _contains_mesh(obj):
-    return obj.type == 'MESH' or any(c.type == 'MESH' for c in obj.children_recursive)
-
-
-def _valid_roots(selected):
-    """Mesh objects, or group empties with at least one mesh somewhere beneath them."""
-    return [o for o in selected
-            if (o.type == 'MESH' or (o.type == 'EMPTY' and o.instance_type == 'NONE'))
-            and _contains_mesh(o)]
-
-
 def _is_identity(m):
     return all(abs(m[i][j] - (1.0 if i == j else 0.0)) < EPS for i in range(4) for j in range(4))
 
@@ -72,27 +34,39 @@ def _degrees(quat):
     return [math.degrees(a) for a in quat.to_euler()]
 
 
-def _describe_transforms(obj):
+# Object-level operations are (done, todo) pairs: "location applied" for the report
+# of a frozen object, "apply location" for the would-be list of a skipped one.
+
+def _describe_object(obj, will_unparent):
     ops = []
     if obj.location.length > EPS:
-        ops.append(f"location applied {_fmt(obj.location)}")
+        v = _fmt(obj.location)
+        ops.append((f"location applied {v}", f"apply location {v}"))
     rot = _rotation_quat(obj)
     if rot.angle > EPS:
-        ops.append(f"rotation applied {_fmt(_degrees(rot))} deg")
+        v = _fmt(_degrees(rot))
+        ops.append((f"rotation applied {v} deg", f"apply rotation {v} deg"))
     if (Vector(obj.scale) - Vector((1, 1, 1))).length > EPS:
-        ops.append(f"scale applied {_fmt(obj.scale)}")
-    return ops
+        v = _fmt(obj.scale)
+        ops.append((f"scale applied {v}", f"apply scale {v}"))
 
-
-def _describe_deltas(obj):
-    ops = []
     if obj.delta_location.length > EPS:
-        ops.append(f"delta location removed {_fmt(obj.delta_location)}")
+        v = _fmt(obj.delta_location)
+        ops.append((f"delta location removed {v}", f"remove delta location {v}"))
     rot = _rotation_quat(obj, delta=True)
     if rot.angle > EPS:
-        ops.append(f"delta rotation removed {_fmt(_degrees(rot))} deg")
+        v = _fmt(_degrees(rot))
+        ops.append((f"delta rotation removed {v} deg", f"remove delta rotation {v} deg"))
     if (Vector(obj.delta_scale) - Vector((1, 1, 1))).length > EPS:
-        ops.append(f"delta scale removed {_fmt(obj.delta_scale)}")
+        v = _fmt(obj.delta_scale)
+        ops.append((f"delta scale removed {v}", f"remove delta scale {v}"))
+
+    if not _is_identity(obj.matrix_parent_inverse):
+        ops.append(("parent inverse removed", "remove parent inverse"))
+    if will_unparent:
+        name = obj.parent.name
+        ops.append((f"unparented from {name} (world placement baked in)",
+                    f"unparent from {name} (world placement baked in)"))
     return ops
 
 
@@ -103,29 +77,30 @@ def _clear_deltas(obj):
     obj.delta_scale = (1.0, 1.0, 1.0)
 
 
-def _apply_modifiers(objects, context, data_ops):
+def _unappliable_reason(obj, apply_modifiers, gn_instancers):
+    """Why this mesh's modifiers would stay on the stack, or None if they won't."""
+    if not obj.modifiers:
+        return None
+    names = ", ".join(m.name for m in obj.modifiers)
+    if not apply_modifiers:
+        return f"modifiers NOT applied, Apply Modifiers is off: {names}"
+    if obj.data.shape_keys:
+        return f"modifiers NOT applied, mesh has shape keys: {names}"
+    if obj in gn_instancers and obj.instance_type == 'NONE':
+        # new_from_object only keeps real mesh; instances would silently vanish.
+        return f"modifiers NOT applied, Geometry Nodes output has instances (add Realize Instances): {names}"
+    return None
+
+
+def _apply_modifiers(objects, depsgraph, data_ops):
     """
     Replace each object's mesh with its viewport-evaluated result and clear the stack.
     All results are evaluated up front so modifiers that reference other objects
     (booleans, mirror targets...) see the scene as it was before anything changed.
     """
-    depsgraph = context.evaluated_depsgraph_get()
-    gn_instancers = {inst.parent.original for inst in depsgraph.object_instances
-                     if inst.is_instance and inst.parent}
-
-    evaluated = {}
-    for obj in objects:
-        names = ", ".join(m.name for m in obj.modifiers)
-        if obj.data.shape_keys:
-            data_ops[obj].append(f"modifiers NOT applied, mesh has shape keys: {names}")
-            continue
-        if obj in gn_instancers and obj.instance_type == 'NONE':
-            # new_from_object only keeps real mesh; instances would silently vanish.
-            data_ops[obj].append(f"modifiers NOT applied, Geometry Nodes output has instances "
-                                 f"(add Realize Instances): {names}")
-            continue
-        evaluated[obj] = bpy.data.meshes.new_from_object(
-            obj.evaluated_get(depsgraph), preserve_all_data_layers=True, depsgraph=depsgraph)
+    evaluated = {obj: bpy.data.meshes.new_from_object(
+                     obj.evaluated_get(depsgraph), preserve_all_data_layers=True, depsgraph=depsgraph)
+                 for obj in objects}
 
     for obj, new_mesh in evaluated.items():
         applied = [m.name for m in obj.modifiers if m.show_viewport]
@@ -172,102 +147,114 @@ def _bake_mesh(obj, world):
 
 def freeze_geo(apply_modifiers=True):
     """
-    Freezes transforms on the selected objects and everything under them:
-    mesh transforms, deltas and parent inverses are baked into the geometry
-    so each mesh sits at an identity matrix, i.e. what you see is what
-    Geometry Nodes (Object Info, Original space, etc.) gets.
+    Freezes transforms on the selected mesh objects: transforms, deltas and
+    parent inverses are baked into the geometry so each mesh sits at an
+    identity matrix, i.e. what you see is what Geometry Nodes gets.
+
+    Only selected meshes are changed. A mesh is skipped entirely if modifiers
+    would stay on its stack and freezing would change how they evaluate.
+    Unselected children of frozen meshes keep their placement via their
+    parent inverse, so their own transforms and animation are untouched.
 
     Returns (report_lines, has_warnings).
     """
     context = bpy.context
-    selected = list(context.selected_objects)
-    roots = _valid_roots(selected)
-    if not roots:
-        raise RuntimeError("Select a mesh, or a group (empty) containing meshes.")
-    skipped = [o.name for o in selected if o not in roots]
+    selected = sorted(context.selected_objects, key=lambda o: o.name)
+    if not selected:
+        raise RuntimeError("Select one or more mesh objects.")
 
-    objects = [o for o in _collect_hierarchy(roots)
-               if o.library is None and o.override_library is None]
-    if not objects:
-        raise RuntimeError("Selection is linked library data; nothing to freeze.")
+    lines_skipped = []
+    candidates = []
+    for obj in selected:
+        if obj.type != 'MESH':
+            lines_skipped.append(f"SKIPPED {obj.name}: not a mesh")
+        elif obj.library or obj.override_library or obj.data.library:
+            lines_skipped.append(f"SKIPPED {obj.name}: linked from a library")
+        else:
+            candidates.append(obj)
 
-    obj_ops = {o: [] for o in objects}
-    data_ops = {o: [] for o in objects}
+    depsgraph = context.evaluated_depsgraph_get()
+    gn_instancers = {inst.parent.original for inst in depsgraph.object_instances
+                     if inst.is_instance and inst.parent}
 
-    has_warnings = False
-    for obj in objects:
+    # Modifiers never move objects, so world matrices can be snapshotted up front.
+    world = {o: o.matrix_world.copy() for o in context.scene.objects}
+
+    # Decide the frozen set: skip meshes whose leftover modifiers would evaluate differently.
+    frozen = []
+    skipped = {}
+    for obj in candidates:
+        reason = _unappliable_reason(obj, apply_modifiers, gn_instancers)
+        if reason and not _is_identity(world[obj]):
+            skipped[obj] = reason
+        else:
+            frozen.append(obj)
+    frozen_set = set(frozen)
+
+    def keeps_parent(obj):
+        return obj.parent in frozen_set and obj.parent_type == 'OBJECT'
+
+    has_warnings = bool(skipped)
+    obj_ops = {o: [] for o in candidates}
+    data_ops = {o: [] for o in candidates}
+
+    for obj in frozen:
         anim = obj.animation_data
         if obj.constraints or (anim and (anim.action or anim.drivers)):
             obj_ops[obj].append("WARNING: constraints/animation/drivers may re-apply transforms")
             has_warnings = True
+        obj_ops[obj] += [done for done, _ in
+                         _describe_object(obj, will_unparent=obj.parent and not keeps_parent(obj))]
+
+    for obj, reason in skipped.items():
+        obj_ops[obj] = [f"SKIPPED {todo}" for _, todo in
+                        _describe_object(obj, will_unparent=obj.parent and not keeps_parent(obj))]
+        data_ops[obj] = [reason, "WARNING: modifiers still on the stack now evaluate in world space "
+                                 f"and may look different: {', '.join(m.name for m in obj.modifiers)}"]
+
+    # Unselected children of frozen meshes (and skipped meshes under them) must not move.
+    adjusted = [c for o in frozen for c in o.children
+                if c not in frozen_set and c.parent_type == 'OBJECT']
 
     if apply_modifiers:
-        _apply_modifiers([o for o in objects if o.type == 'MESH' and o.modifiers], context, data_ops)
+        _apply_modifiers([o for o in frozen if o.modifiers and
+                          not _unappliable_reason(o, apply_modifiers, gn_instancers)],
+                         depsgraph, data_ops)
 
-    # Snapshot after modifiers (they don't move objects) but before any transform edits;
-    # parent chains go stale mid-edit.
-    world = {o: o.matrix_world.copy() for o in objects}
-    identity = {o for o in objects if _is_identity_node(o)}
+    for obj in frozen:
+        if obj.modifiers:  # identity world, so leftover modifiers evaluate unchanged
+            data_ops[obj].append(_unappliable_reason(obj, apply_modifiers, gn_instancers))
+        data_ops[obj] += _bake_mesh(obj, world[obj])
 
-    # Pass 1: bake meshes and collapse identity nodes.
-    for obj in objects:
-        if obj not in identity:
-            continue
-        ops = obj_ops[obj]
-        ops += _describe_transforms(obj)
-        ops += _describe_deltas(obj)
-        if not _is_identity(obj.matrix_parent_inverse):
-            ops.append("parent inverse removed")
-
-        if obj.type == 'MESH' and obj.data.library is None:
-            data_ops[obj] += _bake_mesh(obj, world[obj])
-            if obj.modifiers and not _is_identity(world[obj]):
-                # Modifier settings (bevel width, solidify thickness, mirror axis...) are
-                # in object space, which just changed under them.
-                data_ops[obj].append("WARNING: modifiers still on the stack now evaluate in world "
-                                     f"space and may look different: "
-                                     f"{', '.join(m.name for m in obj.modifiers)}")
-                has_warnings = True
-
-        # Only stay parented if the parent also ends up at identity via a plain
-        # object parent; otherwise the local matrix couldn't be identity.
-        if obj.parent and not (obj.parent in identity and obj.parent_type == 'OBJECT'):
-            ops.append(f"unparented from {obj.parent.name} (world placement baked in)")
+        if obj.parent and not keeps_parent(obj):
             obj.parent = None
-
         _clear_deltas(obj)
         obj.matrix_parent_inverse = Matrix.Identity(4)
         obj.matrix_basis = Matrix.Identity(4)
 
-    context.view_layer.update()
-
-    # Pass 2: everything else keeps its world placement under the new parents.
-    for obj in objects:
-        if obj in identity:
-            continue
-        before = obj.matrix_basis.copy()
-        if obj.parent in identity and not _is_identity(obj.matrix_parent_inverse):
-            obj.matrix_parent_inverse = Matrix.Identity(4)
-            obj_ops[obj].append("parent inverse removed")
-        obj.matrix_world = world[obj]
-        if any(abs(a - b) > EPS for ra, rb in zip(before, obj.matrix_basis) for a, b in zip(ra, rb)):
-            obj_ops[obj].append("local transform recomputed to keep world placement")
+    # The frozen parent's world is now identity; folding its old world into the child's
+    # parent inverse keeps the child in place without touching its own transforms.
+    for child in adjusted:
+        child.matrix_parent_inverse = world[child.parent] @ child.matrix_parent_inverse
 
     context.view_layer.update()
 
     lines = []
-    for obj in objects:
-        if obj in identity:
-            lines.append(f"Froze {obj.name}:")
-            lines += [L1 + op for op in obj_ops[obj] or ["transforms already frozen"]]
-        elif obj_ops[obj]:
-            lines.append(f"Kept {obj.name} ({obj.type.lower()}, world placement preserved):")
-            lines += [L1 + op for op in obj_ops[obj]]
+    for obj in frozen:
+        lines.append(f"Froze {obj.name}:")
+        lines += [L1 + op for op in obj_ops[obj] or ["transforms already frozen"]]
         if data_ops[obj]:
             lines.append(f"{L2}Froze {obj.data.name} (mesh data):")
             lines += [L3 + op for op in data_ops[obj]]
-    for name in skipped:
-        lines.append(f"Skipped {name}: not a mesh or a group containing meshes")
+    for obj in skipped:
+        lines.append(f"SKIPPED {obj.name}:")
+        lines += [L1 + op for op in obj_ops[obj]]
+        lines.append(f"{L2}SKIPPED {obj.data.name} (mesh data):")
+        lines += [L3 + op for op in data_ops[obj]]
+    for child in adjusted:
+        lines.append(f"Adjusted {child.name} ({child.type.lower()}, child of {child.parent.name}):")
+        lines.append(f"{L1}parent inverse updated so it stays in place (own transforms untouched)")
+    lines += lines_skipped
 
     print("\n".join(["Freeze Geo:"] + lines))
     return lines, has_warnings

@@ -48,7 +48,7 @@ class BWTOOLS_OT_match_transforms(bpy.types.Operator):
 
 
 class BWTOOLS_OT_freeze_geo(bpy.types.Operator):
-    """Bake transforms, deltas and parent inverses of selected meshes (and meshes inside selected groups) into their geometry"""
+    """Bake transforms, deltas and parent inverses of the selected meshes into their geometry. Non-mesh objects are skipped"""
     bl_idname = "bwtools.freeze_geo"
     bl_label = "Freeze Geo"
     bl_options = {'REGISTER', 'UNDO'}
