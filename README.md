@@ -10,6 +10,16 @@ Personal Blender addon with small studio utilities, added to the *BW Tools* pane
 
 ## Install
 
+From the repo, copy `bw_tools/` into the newest Blender's user addons folder (replacing any old copy):
+
+```
+python install.py        # or: python install.py 5.1
+```
+
+Then restart Blender, or untick/tick "BW Tools" in Preferences. Re-run after pulling or switching versions to keep the installed copy in sync with the repo.
+
+Or install manually:
+
 1. Zip the `bw_tools/` folder (or point Blender at it directly).
 2. In Blender: `Edit > Preferences > Add-ons > Install...`, select the zip (or the folder's `__init__.py`).
 3. Enable "BW Tools".
