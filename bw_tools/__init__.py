@@ -1,10 +1,10 @@
 bl_info = {
     "name": "BW Tools",
     "author": "bwardcg",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > BW Tools",
-    "description": "Studio tools: Playblast and Match Transforms.",
+    "description": "Studio tools: Playblast, Match Transforms and Freeze Geo.",
     "category": "Object",
 }
 
@@ -12,6 +12,7 @@ import bpy
 
 from .playblast import run_playblast
 from .match_transforms import match_transforms
+from .freeze_geo import freeze_geo
 
 
 class BWTOOLS_OT_playblast(bpy.types.Operator):
@@ -46,6 +47,30 @@ class BWTOOLS_OT_match_transforms(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class BWTOOLS_OT_freeze_geo(bpy.types.Operator):
+    """Bake transforms, deltas and parent inverses of selected meshes (and meshes inside selected groups) into their geometry"""
+    bl_idname = "bwtools.freeze_geo"
+    bl_label = "Freeze Geo"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            frozen, skipped, warnings = freeze_geo()
+        except Exception as e:
+            self.report({'ERROR'}, f"Freeze Geo error: {e}")
+            return {'CANCELLED'}
+
+        if warnings:
+            self.report({'WARNING'}, f"Froze {frozen} mesh(es); animation/constraints may "
+                                     f"re-apply transforms on: {', '.join(warnings)}")
+        elif skipped:
+            self.report({'INFO'}, f"Froze {frozen} mesh(es); skipped: {', '.join(skipped)}")
+        else:
+            self.report({'INFO'}, f"Froze {frozen} mesh(es)")
+
+        return {'FINISHED'}
+
+
 class BWTOOLS_PT_panel(bpy.types.Panel):
     bl_label = "BW Tools"
     bl_idname = "BWTOOLS_PT_panel"
@@ -65,11 +90,13 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
         col2 = layout.column(align=True)
         col2.scale_y = 1.5
         col2.operator("bwtools.match_transforms", icon='CON_TRANSLIKE')
+        col2.operator("bwtools.freeze_geo", icon='FREEZE')
 
 
 classes = (
     BWTOOLS_OT_playblast,
     BWTOOLS_OT_match_transforms,
+    BWTOOLS_OT_freeze_geo,
     BWTOOLS_PT_panel,
 )
 
