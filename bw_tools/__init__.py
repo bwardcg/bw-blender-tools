@@ -47,22 +47,33 @@ class BWTOOLS_OT_match_transforms(bpy.types.Operator):
         return {'FINISHED'}
 
 
+APPLY_MODIFIERS_DESC = ("Bake the viewport modifier result into the mesh and clear the modifier stack "
+                        "(viewport-disabled modifiers are dropped)")
+FORCE_DESC = ("Freeze meshes even when modifiers must stay on the stack and may look different "
+              "afterwards (shape keys, Geometry Nodes instances, Apply Modifiers off). "
+              "Non-mesh objects are still skipped")
+
+
+class BWTOOLS_FreezeGeoSettings(bpy.types.PropertyGroup):
+    """Panel checkbox state for Freeze Geo, saved with the scene"""
+    apply_modifiers: bpy.props.BoolProperty(name="Apply Modifiers", description=APPLY_MODIFIERS_DESC,
+                                            default=True)
+    force: bpy.props.BoolProperty(name="Force", description=FORCE_DESC, default=False)
+
+
 class BWTOOLS_OT_freeze_geo(bpy.types.Operator):
     """Bake transforms, deltas and parent inverses of the selected meshes into their geometry. Non-mesh objects are skipped"""
     bl_idname = "bwtools.freeze_geo"
     bl_label = "Freeze Geo"
     bl_options = {'REGISTER', 'UNDO'}
 
-    apply_modifiers: bpy.props.BoolProperty(
-        name="Apply Modifiers",
-        description="Bake the viewport modifier result into the mesh and clear the modifier stack "
-                    "(viewport-disabled modifiers are dropped)",
-        default=True,
-    )
+    apply_modifiers: bpy.props.BoolProperty(name="Apply Modifiers", description=APPLY_MODIFIERS_DESC,
+                                            default=True)
+    force: bpy.props.BoolProperty(name="Force", description=FORCE_DESC, default=False)
 
     def execute(self, context):
         try:
-            lines, has_warnings = freeze_geo(apply_modifiers=self.apply_modifiers)
+            lines, has_warnings = freeze_geo(apply_modifiers=self.apply_modifiers, force=self.force)
         except Exception as e:
             self.report({'ERROR'}, f"Freeze Geo error: {e}")
             return {'CANCELLED'}
@@ -97,10 +108,19 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
         col2 = layout.column(align=True)
         col2.scale_y = 1.5
         col2.operator("bwtools.match_transforms", icon='CON_TRANSLIKE')
-        col2.operator("bwtools.freeze_geo", icon='FREEZE')
+
+        # Button plus its two option checkboxes; hover a checkbox for its tooltip.
+        settings = context.scene.bwtools_freeze_geo
+        row = col2.row(align=True)
+        op = row.operator("bwtools.freeze_geo", icon='FREEZE')
+        op.apply_modifiers = settings.apply_modifiers
+        op.force = settings.force
+        row.prop(settings, "apply_modifiers", text="")
+        row.prop(settings, "force", text="")
 
 
 classes = (
+    BWTOOLS_FreezeGeoSettings,
     BWTOOLS_OT_playblast,
     BWTOOLS_OT_match_transforms,
     BWTOOLS_OT_freeze_geo,
@@ -111,10 +131,12 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    bpy.types.Scene.bwtools_freeze_geo = bpy.props.PointerProperty(type=BWTOOLS_FreezeGeoSettings)
 
 
 def unregister():
-    for cls in classes:
+    del bpy.types.Scene.bwtools_freeze_geo
+    for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
 

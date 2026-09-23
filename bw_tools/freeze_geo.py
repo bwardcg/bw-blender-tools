@@ -145,14 +145,15 @@ def _bake_mesh(obj, world):
     return ops
 
 
-def freeze_geo(apply_modifiers=True):
+def freeze_geo(apply_modifiers=True, force=False):
     """
     Freezes transforms on the selected mesh objects: transforms, deltas and
     parent inverses are baked into the geometry so each mesh sits at an
     identity matrix, i.e. what you see is what Geometry Nodes gets.
 
     Only selected meshes are changed. A mesh is skipped entirely if modifiers
-    would stay on its stack and freezing would change how they evaluate.
+    would stay on its stack and freezing would change how they evaluate,
+    unless force is set (the modifiers then stay on the stack, with a warning).
     Unselected children of frozen meshes keep their placement via their
     parent inverse, so their own transforms and animation are untouched.
 
@@ -183,10 +184,15 @@ def freeze_geo(apply_modifiers=True):
     # Decide the frozen set: skip meshes whose leftover modifiers would evaluate differently.
     frozen = []
     skipped = {}
+    forced = set()
     for obj in candidates:
         reason = _unappliable_reason(obj, apply_modifiers, gn_instancers)
         if reason and not _is_identity(world[obj]):
-            skipped[obj] = reason
+            if force:
+                forced.add(obj)
+                frozen.append(obj)
+            else:
+                skipped[obj] = reason
         else:
             frozen.append(obj)
     frozen_set = set(frozen)
@@ -194,7 +200,7 @@ def freeze_geo(apply_modifiers=True):
     def keeps_parent(obj):
         return obj.parent in frozen_set and obj.parent_type == 'OBJECT'
 
-    has_warnings = bool(skipped)
+    has_warnings = bool(skipped or forced)
     obj_ops = {o: [] for o in candidates}
     data_ops = {o: [] for o in candidates}
 
@@ -222,8 +228,12 @@ def freeze_geo(apply_modifiers=True):
                          depsgraph, data_ops)
 
     for obj in frozen:
-        if obj.modifiers:  # identity world, so leftover modifiers evaluate unchanged
+        if obj.modifiers:  # leftovers; unchanged unless forced (identity world otherwise)
             data_ops[obj].append(_unappliable_reason(obj, apply_modifiers, gn_instancers))
+            if obj in forced:
+                data_ops[obj].append("WARNING (Force): modifiers still on the stack now evaluate in "
+                                     f"world space and may look different: "
+                                     f"{', '.join(m.name for m in obj.modifiers)}")
         data_ops[obj] += _bake_mesh(obj, world[obj])
 
         if obj.parent and not keeps_parent(obj):
