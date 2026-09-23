@@ -7,6 +7,8 @@ Personal Blender addon with small studio utilities, added to the *BW Tools* pane
 - **Playblast** — renders an OpenGL viewport playblast to `Playblast/<blend_name>.mp4`, one folder up from the `.blend` file. Restores your original render output settings afterward.
 - **Match Transforms** — copies location, rotation, and scale from the active object to all other selected objects (select targets, then shift-select the source last so it's active).
 - **Freeze Geo** — bakes transforms, delta transforms and parent inverses into mesh data so every mesh sits at an identity matrix (what you see is what Geometry Nodes gets). Works on selected meshes, or on group empties containing meshes; child meshes are frozen too. Group empties are zeroed so the hierarchy survives; cameras, lights, etc. keep their world placement. Linked duplicates get their own mesh copy, and negative scale is handled.
+  - **Apply Modifiers** (on by default, toggle in the *Adjust Last Operation* panel): bakes the viewport modifier result into the mesh first and clears the stack; viewport-disabled modifiers are dropped. Meshes with shape keys, or Geometry Nodes output containing instances, keep their modifiers (and get a warning, since kept modifiers now evaluate in world space).
+  - Shows a per-object report of every operation performed (popup, Info editor, and system console).
 
 ## Install
 

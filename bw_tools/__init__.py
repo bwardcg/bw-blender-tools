@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BW Tools",
     "author": "bwardcg",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > BW Tools",
     "description": "Studio tools: Playblast, Match Transforms and Freeze Geo.",
@@ -53,20 +53,27 @@ class BWTOOLS_OT_freeze_geo(bpy.types.Operator):
     bl_label = "Freeze Geo"
     bl_options = {'REGISTER', 'UNDO'}
 
+    apply_modifiers: bpy.props.BoolProperty(
+        name="Apply Modifiers",
+        description="Bake the viewport modifier result into the mesh and clear the modifier stack "
+                    "(viewport-disabled modifiers are dropped)",
+        default=True,
+    )
+
     def execute(self, context):
         try:
-            frozen, skipped, warnings = freeze_geo()
+            lines, has_warnings = freeze_geo(apply_modifiers=self.apply_modifiers)
         except Exception as e:
             self.report({'ERROR'}, f"Freeze Geo error: {e}")
             return {'CANCELLED'}
 
-        if warnings:
-            self.report({'WARNING'}, f"Froze {frozen} mesh(es); animation/constraints may "
-                                     f"re-apply transforms on: {', '.join(warnings)}")
-        elif skipped:
-            self.report({'INFO'}, f"Froze {frozen} mesh(es); skipped: {', '.join(skipped)}")
-        else:
-            self.report({'INFO'}, f"Froze {frozen} mesh(es)")
+        # Full report lands in the Info editor; the popup shows it right away.
+        self.report({'WARNING'} if has_warnings else {'INFO'}, "Freeze Geo:\n" + "\n".join(lines))
+        if not bpy.app.background:
+            def draw(menu, _context):
+                for line in lines:
+                    menu.layout.label(text=line, icon='ERROR' if "WARNING" in line else 'NONE')
+            context.window_manager.popup_menu(draw, title="Freeze Geo", icon='FREEZE')
 
         return {'FINISHED'}
 
