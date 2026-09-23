@@ -37,7 +37,7 @@ def _degrees(quat):
 # Object-level operations are (done, todo) pairs: "location applied" for the report
 # of a frozen object, "apply location" for the would-be list of a skipped one.
 
-def _describe_object(obj, will_unparent):
+def _describe_object(obj):
     ops = []
     if obj.location.length > EPS:
         v = _fmt(obj.location)
@@ -63,11 +63,19 @@ def _describe_object(obj, will_unparent):
 
     if not _is_identity(obj.matrix_parent_inverse):
         ops.append(("parent inverse removed", "remove parent inverse"))
-    if will_unparent:
-        name = obj.parent.name
-        ops.append((f"unparented from {name} (world placement baked in)",
-                    f"unparent from {name} (world placement baked in)"))
     return ops
+
+
+def _space_name(obj):
+    return f"{obj.parent.name}'s space" if obj.parent else "world space"
+
+
+def _depth(obj):
+    depth = 0
+    while obj.parent:
+        obj = obj.parent
+        depth += 1
+    return depth
 
 
 def _clear_deltas(obj):
@@ -120,10 +128,10 @@ def _apply_modifiers(objects, depsgraph, data_ops):
             data_ops[obj].append(f"viewport-disabled modifiers dropped: {', '.join(dropped)}")
 
 
-def _bake_mesh(obj, world):
-    """Push the world matrix into the mesh data so local space == world space."""
+def _bake_mesh(obj, matrix):
+    """Push the object's transform (relative to its parent frame) into the mesh data."""
     ops = []
-    if _is_identity(world):
+    if _is_identity(matrix):
         return ops
 
     users = obj.data.users
@@ -133,10 +141,10 @@ def _bake_mesh(obj, world):
         ops.append(f"made single-user copy (was shared by {users} users)")
 
     me = obj.data
-    me.transform(world, shape_keys=True)
-    ops.append("object transform baked into vertices"
-               + (f" (incl. {len(me.shape_keys.key_blocks)} shape key(s))" if me.shape_keys else ""))
-    if world.is_negative:
+    me.transform(matrix, shape_keys=True)
+    ops.append(f"object transform baked into vertices ({_space_name(obj)})"
+               + (f", incl. {len(me.shape_keys.key_blocks)} shape key(s)" if me.shape_keys else ""))
+    if matrix.is_negative:
         # Mesh.transform doesn't fix winding for mirrored matrices; the viewport
         # was compensating for it, so do the same to keep normals facing out.
         me.flip_normals()
@@ -147,9 +155,11 @@ def _bake_mesh(obj, world):
 
 def freeze_geo(apply_modifiers=True, force=False):
     """
-    Freezes transforms on the selected mesh objects: transforms, deltas and
-    parent inverses are baked into the geometry so each mesh sits at an
-    identity matrix, i.e. what you see is what Geometry Nodes gets.
+    Freezes transforms on the selected mesh objects in their parent's space:
+    transforms, deltas and parent inverses are baked into the geometry so each
+    mesh has an identity local matrix with its origin on its parent's origin
+    (world origin if unparented), i.e. what you see is what Geometry Nodes gets.
+    Same result as unparent, freeze, reparent without inverse.
 
     Only selected meshes are changed. A mesh is skipped entirely if modifiers
     would stay on its stack and freezing would change how they evaluate,
@@ -181,24 +191,38 @@ def freeze_geo(apply_modifiers=True, force=False):
     # Modifiers never move objects, so world matrices can be snapshotted up front.
     world = {o: o.matrix_world.copy() for o in context.scene.objects}
 
-    # Decide the frozen set: skip meshes whose leftover modifiers would evaluate differently.
+    # Where each frozen object ends up: its parent frame, i.e. the matrix its local
+    # transform sits in (world = frame @ parent_inverse @ basis, basis incl. deltas).
+    new_world = {}
+
+    def parent_frame(obj):
+        if obj.parent is None:
+            return Matrix.Identity(4)
+        if obj.parent_type == 'OBJECT':
+            return new_world.get(obj.parent, world[obj.parent])
+        # Bone/vertex parents: recover the frame from the object's own matrices.
+        return world[obj] @ (obj.matrix_parent_inverse @ obj.matrix_basis).inverted_safe()
+
+    # Plan top-down so children see where their frozen parents will land, and skip
+    # meshes whose leftover modifiers would evaluate in a changed object space.
+    candidates.sort(key=lambda o: (_depth(o), o.name))
     frozen = []
     skipped = {}
     forced = set()
+    bake = {}
     for obj in candidates:
+        frame = parent_frame(obj)
+        matrix = frame.inverted_safe() @ world[obj]
         reason = _unappliable_reason(obj, apply_modifiers, gn_instancers)
-        if reason and not _is_identity(world[obj]):
-            if force:
-                forced.add(obj)
-                frozen.append(obj)
-            else:
+        if reason and not _is_identity(matrix):
+            if not force:
                 skipped[obj] = reason
-        else:
-            frozen.append(obj)
+                continue
+            forced.add(obj)
+        frozen.append(obj)
+        bake[obj] = matrix
+        new_world[obj] = frame
     frozen_set = set(frozen)
-
-    def keeps_parent(obj):
-        return obj.parent in frozen_set and obj.parent_type == 'OBJECT'
 
     has_warnings = bool(skipped or forced)
     obj_ops = {o: [] for o in candidates}
@@ -209,18 +233,18 @@ def freeze_geo(apply_modifiers=True, force=False):
         if obj.constraints or (anim and (anim.action or anim.drivers)):
             obj_ops[obj].append("WARNING: constraints/animation/drivers may re-apply transforms")
             has_warnings = True
-        obj_ops[obj] += [done for done, _ in
-                         _describe_object(obj, will_unparent=obj.parent and not keeps_parent(obj))]
+        obj_ops[obj] += [done for done, _ in _describe_object(obj)]
 
     for obj, reason in skipped.items():
-        obj_ops[obj] = [f"SKIPPED {todo}" for _, todo in
-                        _describe_object(obj, will_unparent=obj.parent and not keeps_parent(obj))]
-        data_ops[obj] = [reason, "WARNING: modifiers still on the stack now evaluate in world space "
-                                 f"and may look different: {', '.join(m.name for m in obj.modifiers)}"]
+        obj_ops[obj] = [f"SKIPPED {todo}" for _, todo in _describe_object(obj)]
+        data_ops[obj] = [reason, f"WARNING: modifiers still on the stack would evaluate in "
+                                 f"{_space_name(obj)} and may look different: "
+                                 f"{', '.join(m.name for m in obj.modifiers)}"]
 
     # Unselected children of frozen meshes (and skipped meshes under them) must not move.
     adjusted = [c for o in frozen for c in o.children
-                if c not in frozen_set and c.parent_type == 'OBJECT']
+                if c not in frozen_set and c.parent_type == 'OBJECT'
+                and not _is_identity(bake[o])]
 
     if apply_modifiers:
         _apply_modifiers([o for o in frozen if o.modifiers and
@@ -228,24 +252,24 @@ def freeze_geo(apply_modifiers=True, force=False):
                          depsgraph, data_ops)
 
     for obj in frozen:
-        if obj.modifiers:  # leftovers; unchanged unless forced (identity world otherwise)
+        if obj.modifiers:  # leftovers; unchanged unless forced (object space unchanged otherwise)
             data_ops[obj].append(_unappliable_reason(obj, apply_modifiers, gn_instancers))
             if obj in forced:
-                data_ops[obj].append("WARNING (Force): modifiers still on the stack now evaluate in "
-                                     f"world space and may look different: "
+                data_ops[obj].append(f"WARNING (Force): modifiers still on the stack now evaluate in "
+                                     f"{_space_name(obj)} and may look different: "
                                      f"{', '.join(m.name for m in obj.modifiers)}")
-        data_ops[obj] += _bake_mesh(obj, world[obj])
+        data_ops[obj] += _bake_mesh(obj, bake[obj])
 
-        if obj.parent and not keeps_parent(obj):
-            obj.parent = None
         _clear_deltas(obj)
         obj.matrix_parent_inverse = Matrix.Identity(4)
         obj.matrix_basis = Matrix.Identity(4)
 
-    # The frozen parent's world is now identity; folding its old world into the child's
-    # parent inverse keeps the child in place without touching its own transforms.
+    # A frozen parent moved from world[p] to new_world[p]; folding that change into
+    # the child's parent inverse keeps the child in place without touching its own transforms.
     for child in adjusted:
-        child.matrix_parent_inverse = world[child.parent] @ child.matrix_parent_inverse
+        p = child.parent
+        child.matrix_parent_inverse = (new_world[p].inverted_safe() @ world[p]
+                                       @ child.matrix_parent_inverse)
 
     context.view_layer.update()
 

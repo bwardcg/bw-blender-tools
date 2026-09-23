@@ -10,6 +10,7 @@
 - **Apply Modifiers** and **Force** checkboxes beside the Freeze Geo button, with tooltips; their state is saved with the scene.
 
 ### Changed
+- **Freeze Geo freezes in the parent's space** instead of unparenting: meshes keep their parent (object, bone or vertex), get an identity local transform, and their origin moves to the parent's origin.
 - **Freeze Geo only operates on the selected mesh objects.** Group empties and other non-mesh objects are skipped, and descendants are no longer collected.
 - Unselected children of a frozen mesh keep their placement through their parent inverse instead of a recomputed local transform, so their own transforms and animation are untouched.
 
