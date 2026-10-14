@@ -4,7 +4,7 @@ bl_info = {
     "version": (1, 0, 2),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > BW Tools",
-    "description": "Studio tools: Playblast, Match Transforms and Freeze Geo.",
+    "description": "Studio tools: Playblast, Match Transforms, Snap Locators and Freeze Geo.",
     "category": "Object",
 }
 
@@ -12,6 +12,7 @@ import bpy
 
 from .playblast import run_playblast
 from .match_transforms import match_transforms
+from .snap_locators import snap_locators
 from .freeze_geo import freeze_geo
 
 
@@ -44,6 +45,23 @@ class BWTOOLS_OT_match_transforms(bpy.types.Operator):
             self.report({'ERROR'}, f"Match Transforms error: {e}")
             return {'CANCELLED'}
 
+        return {'FINISHED'}
+
+
+class BWTOOLS_OT_snap_locators(bpy.types.Operator):
+    """Create an unparented "loc_" empty in the Scene Collection at the world transform of each selected object"""
+    bl_idname = "bwtools.snap_locators"
+    bl_label = "Snap Locators"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            created = snap_locators()
+        except Exception as e:
+            self.report({'ERROR'}, f"Snap Locators error: {e}")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"Snapped {len(created)} locator(s)")
         return {'FINISHED'}
 
 
@@ -108,6 +126,7 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
         col2 = layout.column(align=True)
         col2.scale_y = 1.5
         col2.operator("bwtools.match_transforms", icon='CON_TRANSLIKE')
+        col2.operator("bwtools.snap_locators", icon='EMPTY_AXIS')
 
         # Button plus its two option checkboxes; hover a checkbox for its tooltip.
         settings = context.scene.bwtools_freeze_geo
@@ -123,6 +142,7 @@ classes = (
     BWTOOLS_FreezeGeoSettings,
     BWTOOLS_OT_playblast,
     BWTOOLS_OT_match_transforms,
+    BWTOOLS_OT_snap_locators,
     BWTOOLS_OT_freeze_geo,
     BWTOOLS_PT_panel,
 )

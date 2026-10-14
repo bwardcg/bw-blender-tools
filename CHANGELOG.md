@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Snap Locators**: creates a world-space `loc_<name>` Empty in the Scene Collection for each selected object.
+
 ## [1.0.2] - 2026-09-23
 
 ### Added
