@@ -8,6 +8,16 @@ bl_info = {
     "category": "Object",
 }
 
+# On re-enable or Reload Scripts Blender reloads only this module; submodules stay cached
+# in sys.modules, so reload them too or the old tool code keeps running.
+if "bpy" in locals():
+    import importlib
+    import sys
+    for _name in ("playblast", "match_transforms", "snap_locators", "freeze_geo"):
+        _mod = sys.modules.get(f"{__name__}.{_name}")
+        if _mod is not None:
+            importlib.reload(_mod)
+
 import bpy
 
 from .playblast import run_playblast
