@@ -4,6 +4,7 @@
 
 ### Added
 - **Snap Locators**: creates a world-space `loc_<name>` Empty in the Scene Collection for each selected object.
+- **Snap Locators: As Parent** and **Constrain** options (mutually exclusive checkboxes beside the button, saved with the scene): parent each object under its locator with zeroed TRS, or Copy Transforms-constrain each locator to its object.
 
 ## [1.0.2] - 2026-09-23
 

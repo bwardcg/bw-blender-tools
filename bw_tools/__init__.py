@@ -48,20 +48,51 @@ class BWTOOLS_OT_match_transforms(bpy.types.Operator):
         return {'FINISHED'}
 
 
+AS_PARENT_DESC = ("Parent each selected object under its new locator, with location, rotation, scale "
+                  "and deltas zeroed. Turns Constrain off")
+CONSTRAIN_DESC = ("Give each new locator a Copy Transforms constraint targeting its object. "
+                  "Turns As Parent off")
+
+
+def _exclusive(this, other):
+    """Update callback that turns `other` off when `this` is turned on."""
+    def update(self, _context):
+        if getattr(self, this) and getattr(self, other):
+            setattr(self, other, False)
+    return update
+
+
+class BWTOOLS_SnapLocatorsSettings(bpy.types.PropertyGroup):
+    """Panel checkbox state for Snap Locators, saved with the scene"""
+    as_parent: bpy.props.BoolProperty(name="As Parent", description=AS_PARENT_DESC, default=False,
+                                      update=_exclusive("as_parent", "constrain"))
+    constrain: bpy.props.BoolProperty(name="Constrain", description=CONSTRAIN_DESC, default=False,
+                                      update=_exclusive("constrain", "as_parent"))
+
+
 class BWTOOLS_OT_snap_locators(bpy.types.Operator):
     """Create an unparented "loc_" empty in the Scene Collection at the world transform of each selected object"""
     bl_idname = "bwtools.snap_locators"
     bl_label = "Snap Locators"
     bl_options = {'REGISTER', 'UNDO'}
 
+    as_parent: bpy.props.BoolProperty(name="As Parent", description=AS_PARENT_DESC, default=False,
+                                      update=_exclusive("as_parent", "constrain"))
+    constrain: bpy.props.BoolProperty(name="Constrain", description=CONSTRAIN_DESC, default=False,
+                                      update=_exclusive("constrain", "as_parent"))
+
     def execute(self, context):
         try:
-            created = snap_locators()
+            created, warnings = snap_locators(as_parent=self.as_parent, constrain=self.constrain)
         except Exception as e:
             self.report({'ERROR'}, f"Snap Locators error: {e}")
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"Snapped {len(created)} locator(s)")
+        message = f"Snapped {len(created)} locator(s)"
+        if warnings:
+            self.report({'WARNING'}, message + "\n" + "\n".join(warnings))
+        else:
+            self.report({'INFO'}, message)
         return {'FINISHED'}
 
 
@@ -126,9 +157,16 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
         col2 = layout.column(align=True)
         col2.scale_y = 1.5
         col2.operator("bwtools.match_transforms", icon='CON_TRANSLIKE')
-        col2.operator("bwtools.snap_locators", icon='EMPTY_AXIS')
 
-        # Button plus its two option checkboxes; hover a checkbox for its tooltip.
+        # Buttons plus their two option checkboxes; hover a checkbox for its tooltip.
+        settings = context.scene.bwtools_snap_locators
+        row = col2.row(align=True)
+        op = row.operator("bwtools.snap_locators", icon='EMPTY_AXIS')
+        op.as_parent = settings.as_parent
+        op.constrain = settings.constrain
+        row.prop(settings, "as_parent", text="")
+        row.prop(settings, "constrain", text="")
+
         settings = context.scene.bwtools_freeze_geo
         row = col2.row(align=True)
         op = row.operator("bwtools.freeze_geo", icon='FREEZE')
@@ -140,6 +178,7 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
 
 classes = (
     BWTOOLS_FreezeGeoSettings,
+    BWTOOLS_SnapLocatorsSettings,
     BWTOOLS_OT_playblast,
     BWTOOLS_OT_match_transforms,
     BWTOOLS_OT_snap_locators,
@@ -152,9 +191,11 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bwtools_freeze_geo = bpy.props.PointerProperty(type=BWTOOLS_FreezeGeoSettings)
+    bpy.types.Scene.bwtools_snap_locators = bpy.props.PointerProperty(type=BWTOOLS_SnapLocatorsSettings)
 
 
 def unregister():
+    del bpy.types.Scene.bwtools_snap_locators
     del bpy.types.Scene.bwtools_freeze_geo
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
