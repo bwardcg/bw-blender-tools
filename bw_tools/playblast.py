@@ -28,10 +28,16 @@ def run_playblast():
         orig_ffmpeg_format = scene.render.ffmpeg.format
         orig_ffmpeg_codec = scene.render.ffmpeg.codec
         orig_crf = scene.render.ffmpeg.constant_rate_factor
+        orig_audio_codec = scene.render.ffmpeg.audio_codec
+        orig_audio_bitrate = scene.render.ffmpeg.audio_bitrate
+        orig_audio_channels = scene.render.ffmpeg.audio_channels
     except Exception:
         orig_ffmpeg_format = 'MPEG4'
         orig_ffmpeg_codec = 'H264'
         orig_crf = 'MEDIUM'
+        orig_audio_codec = 'NONE'
+        orig_audio_bitrate = 192
+        orig_audio_channels = 'STEREO'
 
     # ── 3. Set output to MP4 ──────────────────────────────────────
     scene.render.filepath = playblast_path
@@ -43,6 +49,9 @@ def run_playblast():
     scene.render.ffmpeg.format = 'MPEG4'
     scene.render.ffmpeg.codec = 'H264'
     scene.render.ffmpeg.constant_rate_factor = 'MEDIUM'
+    scene.render.ffmpeg.audio_codec = 'AAC'
+    scene.render.ffmpeg.audio_bitrate = 192
+    scene.render.ffmpeg.audio_channels = 'STEREO'
 
     try:
         # ── 4. Render directly from the active viewport ───────────
@@ -67,6 +76,9 @@ def run_playblast():
             scene.render.ffmpeg.format = orig_ffmpeg_format
             scene.render.ffmpeg.codec = orig_ffmpeg_codec
             scene.render.ffmpeg.constant_rate_factor = orig_crf
+            scene.render.ffmpeg.audio_codec = orig_audio_codec
+            scene.render.ffmpeg.audio_bitrate = orig_audio_bitrate
+            scene.render.ffmpeg.audio_channels = orig_audio_channels
         except Exception:
             pass
 
