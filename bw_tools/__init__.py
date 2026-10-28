@@ -86,12 +86,14 @@ class BWTOOLS_OT_snap_locators(bpy.types.Operator):
     bl_label = "Snap Locators"
     bl_options = {'REGISTER', 'UNDO'}
 
-    as_parent: bpy.props.BoolProperty(name="As Parent", description=AS_PARENT_DESC, default=False,
-                                      update=_exclusive("as_parent", "constrain"))
-    constrain: bpy.props.BoolProperty(name="Constrain", description=CONSTRAIN_DESC, default=False,
-                                      update=_exclusive("constrain", "as_parent"))
+    # No update callbacks here: the panel sets these from draw() on every redraw, and an
+    # update callback firing from draw() left viewport gizmos unclickable while the panel showed.
+    as_parent: bpy.props.BoolProperty(name="As Parent", description=AS_PARENT_DESC, default=False)
+    constrain: bpy.props.BoolProperty(name="Constrain", description=CONSTRAIN_DESC, default=False)
 
     def execute(self, context):
+        if self.as_parent and self.constrain:
+            self.constrain = False
         try:
             created, warnings = snap_locators(as_parent=self.as_parent, constrain=self.constrain)
         except Exception as e:
