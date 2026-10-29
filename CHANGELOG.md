@@ -1,12 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - 2026-10-29
 
 ### Added
 - **Snap Locators**: creates a world-space `loc_<name>` Empty in the Scene Collection for each selected object.
 - **Snap Locators: As Parent** and **Constrain** options (mutually exclusive checkboxes beside the button, saved with the scene): parent each object under its locator with zeroed TRS, or Copy Transforms-constrain each locator to its object.
 
+- **Playblast: Play When Done** checkbox beside the button (saved with the scene): opens the finished movie in the default video player.
+
 ### Fixed
+- Playblast now includes the scene's audio (AAC, 192 kbps stereo) and restores the original audio settings afterward.
 - Re-enabling the addon or Reload Scripts now reloads the tool modules too, instead of keeping their old code (e.g. `snap_locators() got an unexpected keyword argument`).
 
 ## [1.0.2] - 2026-09-23

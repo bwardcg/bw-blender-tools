@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BW Tools",
     "author": "bwardcg",
-    "version": (1, 0, 2),
+    "version": (1, 1, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > BW Tools",
     "description": "Studio tools: Playblast, Match Transforms, Snap Locators and Freeze Geo.",
@@ -26,15 +26,28 @@ from .snap_locators import snap_locators
 from .freeze_geo import freeze_geo
 
 
+PLAY_WHEN_DONE_DESC = "Open the movie in the default video player once encoding finishes"
+
+
+class BWTOOLS_PlayblastSettings(bpy.types.PropertyGroup):
+    """Panel checkbox state for Playblast, saved with the scene"""
+    play_when_done: bpy.props.BoolProperty(name="Play When Done", description=PLAY_WHEN_DONE_DESC,
+                                           default=False)
+
+
 class BWTOOLS_OT_playblast(bpy.types.Operator):
     """Render an OpenGL viewport playblast to an .mp4 next to the .blend file"""
     bl_idname = "bwtools.playblast"
     bl_label = "Playblast"
     bl_options = {'REGISTER'}
 
+    # No update callback: the panel sets this from draw() on every redraw (see Snap Locators).
+    play_when_done: bpy.props.BoolProperty(name="Play When Done", description=PLAY_WHEN_DONE_DESC,
+                                           default=False)
+
     def execute(self, context):
         try:
-            run_playblast()
+            run_playblast(play_when_done=self.play_when_done)
         except Exception as e:
             self.report({'ERROR'}, f"Playblast error: {e}")
             return {'CANCELLED'}
@@ -160,9 +173,13 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
+        settings = context.scene.bwtools_playblast
         col = layout.column(align=True)
         col.scale_y = 1.8
-        col.operator("bwtools.playblast", icon='RENDER_ANIMATION')
+        row = col.row(align=True)
+        op = row.operator("bwtools.playblast", icon='RENDER_ANIMATION')
+        op.play_when_done = settings.play_when_done
+        row.prop(settings, "play_when_done", text="")
 
         layout.separator()
 
@@ -189,6 +206,7 @@ class BWTOOLS_PT_panel(bpy.types.Panel):
 
 
 classes = (
+    BWTOOLS_PlayblastSettings,
     BWTOOLS_FreezeGeoSettings,
     BWTOOLS_SnapLocatorsSettings,
     BWTOOLS_OT_playblast,
@@ -202,6 +220,7 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    bpy.types.Scene.bwtools_playblast = bpy.props.PointerProperty(type=BWTOOLS_PlayblastSettings)
     bpy.types.Scene.bwtools_freeze_geo = bpy.props.PointerProperty(type=BWTOOLS_FreezeGeoSettings)
     bpy.types.Scene.bwtools_snap_locators = bpy.props.PointerProperty(type=BWTOOLS_SnapLocatorsSettings)
 
@@ -209,6 +228,7 @@ def register():
 def unregister():
     del bpy.types.Scene.bwtools_snap_locators
     del bpy.types.Scene.bwtools_freeze_geo
+    del bpy.types.Scene.bwtools_playblast
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 

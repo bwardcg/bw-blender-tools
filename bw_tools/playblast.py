@@ -1,9 +1,23 @@
 import bpy
 import os
+import subprocess
+import sys
 
 
-def run_playblast():
-    """Render an OpenGL viewport playblast to an .mp4 next to the .blend file."""
+def _open_in_default_player(path):
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+def run_playblast(play_when_done=False):
+    """Render an OpenGL viewport playblast to an .mp4 next to the .blend file.
+
+    With play_when_done, open the finished movie in the system's default player.
+    """
     scene = bpy.context.scene
 
     # ── 1. Resolve paths ──────────────────────────────────────────
@@ -60,6 +74,14 @@ def run_playblast():
         bpy.ops.render.opengl(animation=True)
 
         print("[Playblast] Completed successfully.")
+
+        # The animation operator blocks until ffmpeg has closed the file, so it is safe to open.
+        if play_when_done:
+            movie_path = os.path.normpath(bpy.path.abspath(playblast_path))
+            if os.path.isfile(movie_path):
+                _open_in_default_player(movie_path)
+            else:
+                print(f"[Playblast] Movie not found, not playing: {movie_path}")
 
     except Exception as e:
         print(f"[Playblast] Error: {e}")

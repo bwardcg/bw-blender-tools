@@ -4,7 +4,7 @@ Personal Blender addon with small studio utilities, added to the *BW Tools* pane
 
 ## Tools
 
-- **Playblast** — renders an OpenGL viewport playblast to `Playblast/<blend_name>.mp4`, one folder up from the `.blend` file. Restores your original render output settings afterward.
+- **Playblast** — renders an OpenGL viewport playblast to `Playblast/<blend_name>.mp4`, one folder up from the `.blend` file. Includes the scene's audio (AAC). Restores your original render output settings afterward. A checkbox next to the button (hover for the tooltip, saved with the scene) opens the finished movie in the default video player.
 - **Match Transforms** — copies location, rotation, and scale from the active object to all other selected objects (select targets, then shift-select the source last so it's active).
 - **Snap Locators** — for each selected object, creates a plain-axes Empty named `loc_<name>` in the root Scene Collection, unparented, at the object's world location, rotation and scale (constraints and parenting included). The new locators are left selected.
   - Two checkboxes next to the button (hover for tooltips), saved with the scene and also editable afterwards in the *Adjust Last Operation* panel. Turning one on turns the other off:
